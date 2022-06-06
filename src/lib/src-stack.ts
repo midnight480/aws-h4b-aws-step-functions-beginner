@@ -1,7 +1,7 @@
-import { aws_dynamodb, Duration, Stack, StackProps } from 'aws-cdk-lib';
-import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { aws_dynamodb, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
+import { DynamoGetItem, DynamoAttributeValue }  from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
-import { StateMachine, Choice, Condition, Pass, StateMachineType, TaskStateBase } from 'aws-cdk-lib/aws-stepfunctions';
+import { StateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 
@@ -12,14 +12,16 @@ export class SrcStack extends Stack {
   // DynamoDB
   const articleTable = new aws_dynamodb.Table(this, 'articleTable' , {
       tableName: 'Article' ,
-      partitionKey: { name: 'articleId', type: aws_dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'articleID', type: aws_dynamodb.AttributeType.STRING },
       billingMode: aws_dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY
   })
 
   // Get DynamoDB for Step Functions 
-  const getDdbItem = new tasks.DynamoGetItem(this, 'Get Ddb Item' , {
-      key: { articleID: tasks.DynamoAttributeValue.fromString('0001') },
+  const getDdbItem = new DynamoGetItem(this, 'Get Ddb Item' , {
+      key: { articleID: DynamoAttributeValue.fromString('0001') },
       table: articleTable ,
+      consistentRead: false ,
     });
   
   // Defination for Step Functions
