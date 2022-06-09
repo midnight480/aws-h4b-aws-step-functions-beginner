@@ -2,28 +2,39 @@ import { aws_dynamodb, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cd
 import { DynamoGetItem, DynamoAttributeValue, DynamoUpdateItem, CallAwsService }  from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
 import { Choice, Condition, Fail, JsonPath, Parallel, Pass, StateMachine, Wait, WaitTime } from 'aws-cdk-lib/aws-stepfunctions';
+import { BlockPublicAccess, Bucket, BucketAccessControl, BucketEncryption } from 'aws-cdk-lib/aws-s3';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 
 
 export class SrcStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-  // [ToDo]S3 Bucket
+  // S3 Bucket
+  const s3BucketName = 'h4b-sfn-shibao' ;
+  const bucket = new Bucket(this, "Create S3 bucket", {
+    bucketName: s3BucketName,
+    accessControl: BucketAccessControl.PRIVATE,
+    encryption: BucketEncryption.S3_MANAGED,
+    versioned: false,
+    blockPublicAccess: BlockPublicAccess.BLOCK_ALL ,
+    removalPolicy: RemovalPolicy.DESTROY ,
+    autoDeleteObjects: true ,
+  });
 
   // DynamoDB
   const articleTable = new aws_dynamodb.Table(this, 'articleTable' , {
       tableName: 'Article' ,
-      partitionKey: { name: 'articleID', type: aws_dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'ArticleID', type: aws_dynamodb.AttributeType.STRING },
       billingMode: aws_dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
   })
 
   // Get DynamoDB for Step Functions 
   const getDdbItem = new DynamoGetItem(this, 'Get Ddb Item' , {
-      key: { articleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.ArticleID')) },
+      key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.ArticleID')) },
       table: articleTable ,
       consistentRead: false ,
-      inputPath: '$.ArticleID' ,
     });
 
   /*------------------ */
@@ -32,9 +43,9 @@ export class SrcStack extends Stack {
   const translateText = new CallAwsService(this, 'TranslateText', {
     service: 'Translate' ,
     action: 'translateText' ,
-    iamAction: 'translate:TranslateText' ,
+    // !Note iamAction Needs not match service:action 
+    // iamAction: 'translate:TranslateText' ,
     iamResources: ['*'] ,
-    inputPath: '$.Item.Detail.S' ,
     parameters: {
       "SourceLanguageCode": "ja" ,
       "TargetLanguageCode": "en",
@@ -45,14 +56,12 @@ export class SrcStack extends Stack {
 
   // Update DynamoDB for Translate Text on Step Functions
   const updateDdbItemTranslate = new DynamoUpdateItem(this, 'Update Ddb Item for Traslate' , {
-    key: { articleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
+    key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
     table: articleTable ,
-    inputPath: '$.Item.ArticleID.S' ,
     expressionAttributeValues: {
-      ':EnglishVersionRef': DynamoAttributeValue.numberFromString(JsonPath.stringAt('$.Result.TranslatedText')),
+      ':EnglishVersionRef': DynamoAttributeValue.fromString(JsonPath.stringAt('$.Result.TranslatedText')),
     },
     updateExpression: 'SET EnglishVersionRef = :EnglishVersionRef',
-    outputPath: '$.Result.TranslatedText'
   });
 
   // Translate Tasks
@@ -66,12 +75,11 @@ export class SrcStack extends Stack {
   const speechSynthesis = new CallAwsService(this, 'SpeechSynthesis', {
    service: 'polly' ,
    action: 'startSpeechSynthesisTask' ,
-   iamAction: 'polly:startSpeechSynthesisTask' ,
+   // iamAction: 'polly:startSpeechSynthesisTask' ,
    iamResources: ['*'] ,
-   inputPath: '$.Item.Detail.S' ,
    parameters: {
     "OutputFormat": "mp3",
-    "OutputS3BucketName": "h4b-sf-output-shibao",
+    "OutputS3BucketName": s3BucketName,
     "Text.$": "$.Item.Detail.S",
     "VoiceId": "Mizuki"
     },
@@ -80,23 +88,22 @@ export class SrcStack extends Stack {
 
   // Update DynamoDB for Translate Text on Step Functions
   const updateDdbItemSpeech = new DynamoUpdateItem(this, 'Update Ddb Item for Speech' , {
-    key: { articleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
+    key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
     table: articleTable ,
-    inputPath: '$.Item.ArticleID.S' ,
     expressionAttributeValues: {
-      ':S3URL': DynamoAttributeValue.numberFromString(JsonPath.stringAt('$.Result.SynthesisTask.OutputUri')),
+      ':S3URLRef': DynamoAttributeValue.fromString(JsonPath.stringAt('$.Result.SynthesisTask.OutputUri')),
     },
-    updateExpression: 'SET S3URL = :S3URLRef',
-    outputPath: '$.Result.SynthesisTask.OutputUri'
+    updateExpression: 'SET S3URLRef = :S3URLRef',
+    resultPath: '$.Result.SynthesisTask.OutputUri'
   });
 
   // Get Speech Task State
   const getSpeechTask = new CallAwsService(this, 'GetSpeechSynthesisTask', {
     service: 'polly' ,
     action: 'getSpeechSynthesisTask' ,
-    iamAction: 'polly:getSpeechSynthesisTask' ,
+   // !Note iamAction Needs not match service:action 
+   // iamAction: 'polly:getSpeechSynthesisTask' ,
     iamResources: ['*'] ,
-    inputPath: '$.Result.SynthesisTask.TaskId' ,
     parameters: {
       "TaskId.$": "$.Result.SynthesisTask.TaskId"
     } ,
@@ -104,7 +111,7 @@ export class SrcStack extends Stack {
   });
 
   const wait4task = new Wait(this, 'Wait for Speech Synthesis', {
-    time: WaitTime.secondsPath('$.waitSeconds'),
+    time: WaitTime.duration(Duration.seconds(5)),
   });
 
     /*------------------ */
@@ -119,7 +126,7 @@ export class SrcStack extends Stack {
 
   const speechtask12 = speechtask11
     .next( new Choice(this, 'Check for Speech Synthesis')
-      .when(Condition.stringEquals('$.Result.SynthesisTask.TaskStatus', 'completed'), updateDdbItemSpeech)
+      .when(Condition.stringMatches('$.Result.SynthesisTask.TaskStatus', 'completed'), updateDdbItemSpeech)
       .otherwise( speechtask21 )
    );
 
@@ -156,8 +163,16 @@ export class SrcStack extends Stack {
   // Step Functions
   const simpleStateMachine  =  new StateMachine(this, 'h4b-stateMachine', {
       definition: definition ,
-      timeout: Duration.seconds(30)
+      timeout: Duration.seconds(60)
     });
+
+  // Add IAM Policy for Polly 
+    simpleStateMachine.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['s3:PutObject'],
+        resources: ['*'],
+      })
+    );
 
   }
 }
