@@ -1,164 +1,104 @@
-import { aws_dynamodb, Duration, RemovalPolicy, Stack, StackProps } from 'aws-cdk-lib';
-import { DynamoGetItem, DynamoAttributeValue, DynamoUpdateItem, CallAwsService }  from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { Duration, Stack, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { Choice, Condition, Fail, JsonPath, Parallel, Pass, StateMachine, Wait, WaitTime } from 'aws-cdk-lib/aws-stepfunctions';
-import { BlockPublicAccess, Bucket, BucketAccessControl, BucketEncryption } from 'aws-cdk-lib/aws-s3';
+import { Choice, Condition, Fail, Parallel, Pass, StateMachine, Wait, WaitTime } from 'aws-cdk-lib/aws-stepfunctions';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 
+import { S3 } from './resource/s3'
+import { Ddb } from './resource/ddb'
+import { Translate } from './resource/translatetext'
+import { Polly } from './resource/polly'
 
 export class SrcStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
+  /*--- S3 Task --*/
+
+  // S3 Bucket Name
+  const s3BucketName = 'h4b-sfn-shibao';
   // S3 Bucket
-  const s3BucketName = 'h4b-sfn-shibao' ;
-  const bucket = new Bucket(this, "Create S3 bucket", {
-    bucketName: s3BucketName,
-    accessControl: BucketAccessControl.PRIVATE,
-    encryption: BucketEncryption.S3_MANAGED,
-    versioned: false,
-    blockPublicAccess: BlockPublicAccess.BLOCK_ALL ,
-    removalPolicy: RemovalPolicy.DESTROY ,
-    autoDeleteObjects: true ,
-  });
+  const s3bucket = new S3();
+  s3bucket.createS3(this, s3BucketName);
 
+  /*-- DynamoDB Tasks --*/
+
+  // DynamoDB Table Name
+  const ddbTableName = 'Article';
+  const ddbPartitionName = 'ArticleID';
   // DynamoDB
-  const articleTable = new aws_dynamodb.Table(this, 'articleTable' , {
-      tableName: 'Article' ,
-      partitionKey: { name: 'ArticleID', type: aws_dynamodb.AttributeType.STRING },
-      billingMode: aws_dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-  })
+  const ddb = new Ddb();
+  ddb.createDdb(this, ddbTableName, ddbPartitionName);
+  // Get DynamoDB Item for Step Functions
+  const getDdbItem = ddb.getDdbItem(this);
+  // Update DynamoDB for Step Functions
+  const updateDdbItemTranslateText = ddb.updateDdbItemTranslateText(this);
+  // Update DynamoDB for Translate Text on Step Functions
+  const updateDdbItemPollyUrl = ddb.updateDdbItemPollyUrl(this);
 
-  // Get DynamoDB for Step Functions 
-  const getDdbItem = new DynamoGetItem(this, 'Get Ddb Item' , {
-      key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.ArticleID')) },
-      table: articleTable ,
-      consistentRead: false ,
-    });
-
-  /*------------------ */
+  /*-- Translate Text Tasks --*/
 
   // Translate Text
-  const translateText = new CallAwsService(this, 'TranslateText', {
-    service: 'Translate' ,
-    action: 'translateText' ,
-    // !Note iamAction Needs not match service:action 
-    // iamAction: 'translate:TranslateText' ,
-    iamResources: ['*'] ,
-    parameters: {
-      "SourceLanguageCode": "ja" ,
-      "TargetLanguageCode": "en",
-       "Text.$": "$.Item.Detail.S"
-    } ,
-    resultPath: '$.Result' ,
-  });
+  const translateText = new Translate() ;
+  const calltranslateTextService = translateText.translateTextService(this);
 
-  // Update DynamoDB for Translate Text on Step Functions
-  const updateDdbItemTranslate = new DynamoUpdateItem(this, 'Update Ddb Item for Traslate' , {
-    key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
-    table: articleTable ,
-    expressionAttributeValues: {
-      ':EnglishVersionRef': DynamoAttributeValue.fromString(JsonPath.stringAt('$.Result.TranslatedText')),
-    },
-    updateExpression: 'SET EnglishVersionRef = :EnglishVersionRef',
-  });
+  /*-- Polly Tasks --*/
 
-  // Translate Tasks
-  const translateTasks = translateText
-    .next(updateDdbItemTranslate)
-  ;
-
-  /*------------------ */
-
+  const polly = new Polly();
   // Speech-To-Text 
-  const speechSynthesis = new CallAwsService(this, 'SpeechSynthesis', {
-   service: 'polly' ,
-   action: 'startSpeechSynthesisTask' ,
-   // iamAction: 'polly:startSpeechSynthesisTask' ,
-   iamResources: ['*'] ,
-   parameters: {
-    "OutputFormat": "mp3",
-    "OutputS3BucketName": s3BucketName,
-    "Text.$": "$.Item.Detail.S",
-    "VoiceId": "Mizuki"
-    },
-   resultPath: '$.Result' ,
-  })
-
-  // Update DynamoDB for Translate Text on Step Functions
-  const updateDdbItemSpeech = new DynamoUpdateItem(this, 'Update Ddb Item for Speech' , {
-    key: { ArticleID: DynamoAttributeValue.fromString(JsonPath.stringAt('$.Item.ArticleID.S')) },
-    table: articleTable ,
-    expressionAttributeValues: {
-      ':S3URLRef': DynamoAttributeValue.fromString(JsonPath.stringAt('$.Result.SynthesisTask.OutputUri')),
-    },
-    updateExpression: 'SET S3URLRef = :S3URLRef',
-    resultPath: '$.Result.SynthesisTask.OutputUri'
-  });
-
+  const speechSynthesis = polly.pollyTextService(this, s3BucketName);
   // Get Speech Task State
-  const getSpeechTask = new CallAwsService(this, 'GetSpeechSynthesisTask', {
-    service: 'polly' ,
-    action: 'getSpeechSynthesisTask' ,
-   // !Note iamAction Needs not match service:action 
-   // iamAction: 'polly:getSpeechSynthesisTask' ,
-    iamResources: ['*'] ,
-    parameters: {
-      "TaskId.$": "$.Result.SynthesisTask.TaskId"
-    } ,
-    resultPath: '$.Result' ,
-  });
+  const getSpeechTask = polly.getPollyTaskService(this);
 
+  /*-- Step Functions Tasks --*/
+
+  // Wait Task
   const wait4task = new Wait(this, 'Wait for Speech Synthesis', {
     time: WaitTime.duration(Duration.seconds(5)),
   });
 
-    /*------------------ */
+  // Error for Step Functions 
+  const jobFailed = new Fail(this, 'Job Failed', {
+    cause: 'AWS Step Functions Job Failed',
+    error: 'DescribeJob returned FAILED',
+  });
 
-  const speechtask11 =  speechSynthesis
-    .next(getSpeechTask)
-    ;
+  /*-- Translate Tasks -- */
 
-  const speechtask21 = wait4task
+  const translateTasks = calltranslateTextService
+    .next(updateDdbItemTranslateText)
+  ;
+
+  /*-- Polly Tasks -- */
+
+  const callPollyTask =  speechSynthesis
     .next(getSpeechTask)
   ;
 
-  const speechtask12 = speechtask11
+  const wait4Polly = wait4task
+    .next(getSpeechTask)
+  ;
+
+  const nextPollyTask = callPollyTask
     .next( new Choice(this, 'Check for Speech Synthesis')
-      .when(Condition.stringMatches('$.Result.SynthesisTask.TaskStatus', 'completed'), updateDdbItemSpeech)
-      .otherwise( speechtask21 )
-   );
+      .when(Condition.stringMatches('$.Result.SynthesisTask.TaskStatus', 'completed'), updateDdbItemPollyUrl)
+      .otherwise( wait4Polly )
+  );
 
   // Speech Tasks
-  const speechTasks = speechtask12
-    
-    /*------------------ */
+  const speechTasks = nextPollyTask;
 
   // Parallel for Step Functions 
   const parallel = new Parallel(this, 'Parallel')
     .branch( translateTasks )
     .branch( speechTasks )
-    ;
-
-   /*------------------ */
-
-   // Error for Step Functions 
-  const jobFailed = new Fail(this, 'Job Failed', {
-      cause: 'AWS Step Functions Job Failed',
-      error: 'DescribeJob returned FAILED',
-    });
-
-  /*------------------ */
-
+  ;
+  
   // Definition for Step Functions
   const definition = getDdbItem
     .next( new Choice(this, 'Item is present')
         .when(Condition.isPresent('$.Item'), parallel)
         .otherwise(jobFailed)
     );
-
-  /*------------------ */
 
   // Step Functions
   const simpleStateMachine  =  new StateMachine(this, 'h4b-stateMachine', {
