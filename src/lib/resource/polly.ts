@@ -2,27 +2,27 @@ import { Construct } from 'constructs';
 import { CallAwsService }  from 'aws-cdk-lib/aws-stepfunctions-tasks';
 
 export class Polly{
-    public pollyText: CallAwsService;
+    public doPollyText: CallAwsService;
     public getPollyTask: CallAwsService;
 
     constructor() { };
 
         // Speech-To-Text 
-        public pollyTextService(scope: Construct, id: string) {
-            this.pollyText = new CallAwsService(scope, 'SpeechSynthesis', {
+        public pollyTextService(scope: Construct, s3BucketName: string) {
+            this.doPollyText = new CallAwsService(scope, 'SpeechSynthesis', {
                 service: 'polly' ,
                 action: 'startSpeechSynthesisTask' ,
                 // iamAction: 'polly:startSpeechSynthesisTask' ,
                 iamResources: ['*'] ,
                 parameters: {
                     "OutputFormat": "mp3",
-                    "OutputS3BucketName": id,
+                    "OutputS3BucketName": s3BucketName,
                     "Text.$": "$.Item.Detail.S",
                     "VoiceId": "Mizuki"
                 },
                     resultPath: '$.Result' ,
                 })
-            return this.pollyText;
+            return this.doPollyText;
         }
 
         // Get Speech Task State

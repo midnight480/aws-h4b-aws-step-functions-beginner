@@ -12,13 +12,14 @@ export class Ddb {
 
     constructor() { };
 
-        public createDdb(scope: Construct, id: string, partitionName: string) {
+        public createDdb(scope: Construct, tableName: string, partitionName: string) {
             this.table = new aws_dynamodb.Table(scope, 'Create DynamoDB Table' , {
-                tableName: id ,
+                tableName: tableName ,
                 partitionKey: { name: partitionName, type: aws_dynamodb.AttributeType.STRING },
                 billingMode: aws_dynamodb.BillingMode.PAY_PER_REQUEST,
                 removalPolicy: RemovalPolicy.DESTROY
             })
+            return this.table;
         }
 
         public getDdbItem(scope: Construct){

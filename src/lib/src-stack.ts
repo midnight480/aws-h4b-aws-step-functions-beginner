@@ -1,4 +1,4 @@
-import { Duration, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, Stack, StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { Choice, Condition, Fail, Parallel, Pass, StateMachine, Wait, WaitTime } from 'aws-cdk-lib/aws-stepfunctions';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -113,6 +113,11 @@ export class SrcStack extends Stack {
         resources: ['*'],
       })
     );
+
+  new CfnOutput(this, 'S3 Bucket Arn', { value: s3bucket.bucket.bucketArn}) ;
+  new CfnOutput(this, 'DynamoDB Arn', { value: ddb.table.tableArn }) ;
+  new CfnOutput(this, 'Step Functions State Machine Arn', { value: simpleStateMachine.stateMachineArn  }) ;
+  new CfnOutput(this, 'Step Functions State Machine IAM Role Arn', { value: simpleStateMachine.role.roleArn  }) ;
 
   }
 }
