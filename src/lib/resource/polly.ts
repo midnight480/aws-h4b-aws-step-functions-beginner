@@ -7,7 +7,7 @@ export class Polly{
 
     constructor() { };
 
-        // Speech-To-Text 
+        // Text-To-Speech 
         public pollyTextService(scope: Construct, s3BucketName: string) {
             this.doPollyText = new CallAwsService(scope, 'SpeechSynthesis', {
                 service: 'polly' ,
